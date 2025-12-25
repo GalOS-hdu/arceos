@@ -346,12 +346,40 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     }
 
     /// 设置符号链接
-    pub fn set_symlink(&mut self, _ino: u32, _target: &[u8]) -> Ext4Result<()> {
-        // TODO: 实现符号链接
-        Err(Ext4Error::new(
-            LinuxError::EOPNOTSUPP as i32,
-            Some("Symlink not yet implemented"),
-        ))
+    pub fn set_symlink(&mut self, ino: u32, target: &[u8]) -> Ext4Result<()> {
+        // 使用 with_inode_ref 来操作 inode
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                // 1. 设置大小为目标路径长度
+                inode_ref.set_size(target.len() as u64)?;
+
+                if target.len() < 60 {
+                    // 快速符号链接：存储在 inode.blocks 中
+                    inode_ref.with_inode_mut(|inode| {
+                        let block_slice = unsafe {
+                            core::slice::from_raw_parts_mut(
+                                inode.blocks.as_mut_ptr() as *mut u8,
+                                60,
+                            )
+                        };
+                        block_slice[..target.len()].copy_from_slice(target);
+                    })?;
+                } else {
+                    // 慢速符号链接：需要写入数据块
+                    // 注意：这要求 inode 已经是符号链接类型并且已初始化 extent 树
+                    // 直接写入第一个块
+                    let bytes_written = inode_ref.write_at(0, target)?;
+                    if bytes_written != target.len() {
+                        return Err(lwext4_core::Error::new(
+                            lwext4_core::ErrorKind::Io,
+                            "Failed to write symlink target"
+                        ));
+                    }
+                }
+
+                Ok(())
+            })
+            .map_err(Ext4Error::from_core_error)
     }
 
     /// 读取目录
