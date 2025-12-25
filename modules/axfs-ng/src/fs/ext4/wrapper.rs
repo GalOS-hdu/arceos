@@ -130,27 +130,33 @@ impl LookupResult {
 // ===== 目录读取器兼容层 =====
 
 /// 目录读取结果（兼容 lwext4_rust 的 read_dir 返回值）
-pub struct DirReaderResult<'a, D: lwext4_core::BlockDevice> {
-    reader: lwext4_core::DirReader<'a, 'a, D>,
+pub struct DirReaderResult {
+    entries: Vec<lwext4_core::DirEntry>,
+    current_index: usize,
 }
 
-impl<'a, D: lwext4_core::BlockDevice> DirReaderResult<'a, D> {
+impl DirReaderResult {
     pub fn entry(&self) -> DirEntry {
         DirEntry {
-            inner: self.reader.current().unwrap().clone(),
+            inner: self.entries[self.current_index].clone(),
         }
     }
 
     pub fn current(&self) -> Option<DirEntry> {
-        self.reader.current().map(|e| DirEntry { inner: e.clone() })
+        self.entries
+            .get(self.current_index)
+            .map(|e| DirEntry { inner: e.clone() })
     }
 
     pub fn step(&mut self) -> Ext4Result<()> {
-        self.reader.step().map_err(Ext4Error::from_core_error)
+        if self.current_index < self.entries.len() {
+            self.current_index += 1;
+        }
+        Ok(())
     }
 
     pub fn offset(&self) -> u64 {
-        self.reader.offset()
+        self.current_index as u64
     }
 }
 
@@ -158,16 +164,19 @@ impl<'a, D: lwext4_core::BlockDevice> DirReaderResult<'a, D> {
 
 /// Inode 引用包装器（兼容 lwext4_rust 的 with_inode_ref）
 pub struct InodeRefWrapper<'a, D: lwext4_core::BlockDevice> {
-    inner: lwext4_core::InodeRef<'a, D>,
+    inner: &'a mut lwext4_core::InodeRef<'a, D>,
 }
 
 impl<'a, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, D> {
-    pub fn size(&self) -> u64 {
+    pub fn size(&mut self) -> u64 {
         self.inner.size().unwrap_or(0)
     }
 
-    pub fn mode(&self) -> u32 {
-        self.inner.mode().unwrap_or(0)
+    pub fn mode(&mut self) -> u32 {
+        // 通过 with_inode 读取 mode
+        self.inner
+            .with_inode(|inode| u16::from_le(inode.mode) as u32)
+            .unwrap_or(0)
     }
 
     pub fn set_mode(&mut self, mode: u32) {
@@ -175,8 +184,7 @@ impl<'a, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, D> {
     }
 
     pub fn set_owner(&mut self, uid: u32, gid: u32) {
-        let _ = self.inner.set_uid(uid);
-        let _ = self.inner.set_gid(gid);
+        let _ = self.inner.set_owner(uid, gid);
     }
 
     pub fn set_atime(&mut self, time: &Duration) {
@@ -218,7 +226,8 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     /// 创建新的文件系统实例（兼容 lwext4_rust）
     pub fn new(device: D, _config: FsConfig) -> Ext4Result<Self> {
         // 将设备包装为 BlockDev
-        let bdev = lwext4_core::BlockDev::new(device);
+        let bdev = lwext4_core::BlockDev::new(device)
+            .map_err(Ext4Error::from_core_error)?;
 
         let inner = lwext4_core::Ext4FileSystem::mount(bdev)
             .map_err(Ext4Error::from_core_error)?;
@@ -238,7 +247,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
             blocks_count: stats.blocks_total,
             free_blocks_count: stats.blocks_free,
             inodes_count: stats.inodes_total,
-            free_inodes_count: stats.free_inodes_count,
+            free_inodes_count: stats.inodes_free,
         })
     }
 
@@ -250,7 +259,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
 
     /// 查找目录项
     ///
-    /// 注意：这个方法返回 DirReaderResult 而不是单个 DirEntry
+    /// 注意：这个方法返回 LookupResult 而不是单个 DirEntry
     /// 这是为了兼容 lwext4_rust 的 API
     pub fn lookup(&mut self, dir_ino: u32, name: &str) -> Ext4Result<LookupResult> {
         let child_ino = self
@@ -259,47 +268,80 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
             .map_err(Ext4Error::from_core_error)?;
 
         // 获取文件属性来构造完整的 DirEntry
-        let attr = self
+        let metadata = self
             .inner
             .get_inode_attr(child_ino)
             .map_err(Ext4Error::from_core_error)?;
 
+        // 将 FileType 转换为 InodeType
+        let inode_type = match metadata.file_type {
+            lwext4_core::FileType::Directory => InodeType::Directory,
+            lwext4_core::FileType::RegularFile => InodeType::RegularFile,
+            lwext4_core::FileType::Symlink => InodeType::Symlink,
+            _ => InodeType::Unknown,
+        };
+
         Ok(LookupResult {
             ino: child_ino,
             name: name.as_bytes().to_vec(),
-            inode_type: attr.node_type,
+            inode_type,
         })
     }
 
     /// 获取文件属性
     pub fn get_attr(&mut self, ino: u32, attr: &mut FileAttr) -> Ext4Result<()> {
-        let file_attr = self
+        let metadata = self
             .inner
             .get_inode_attr(ino)
             .map_err(Ext4Error::from_core_error)?;
 
-        *attr = file_attr;
+        // 将 FileMetadata 转换为 FileAttr
+        let node_type = match metadata.file_type {
+            lwext4_core::FileType::Directory => InodeType::Directory,
+            lwext4_core::FileType::RegularFile => InodeType::RegularFile,
+            lwext4_core::FileType::Symlink => InodeType::Symlink,
+            lwext4_core::FileType::CharDevice => InodeType::CharacterDevice,
+            lwext4_core::FileType::BlockDevice => InodeType::BlockDevice,
+            lwext4_core::FileType::Fifo => InodeType::Fifo,
+            lwext4_core::FileType::Socket => InodeType::Socket,
+            _ => InodeType::Unknown,
+        };
+
+        *attr = FileAttr {
+            device: 0, // TODO: 获取设备号
+            nlink: metadata.links_count as u32,
+            mode: metadata.permissions as u32,
+            node_type,
+            uid: metadata.uid,
+            gid: metadata.gid,
+            size: metadata.size,
+            block_size: 4096, // TODO: 从文件系统获取
+            blocks: (metadata.size + 4095) / 4096,
+            atime: metadata.atime as u64,
+            mtime: metadata.mtime as u64,
+            ctime: metadata.ctime as u64,
+        };
         Ok(())
     }
 
     /// 读取文件数据
     pub fn read_at(&mut self, ino: u32, buf: &mut [u8], offset: u64) -> Ext4Result<usize> {
         self.inner
-            .read_at_inode(ino, offset, buf)
+            .read_at_inode(ino, buf, offset)
             .map_err(Ext4Error::from_core_error)
     }
 
     /// 写入文件数据
     pub fn write_at(&mut self, ino: u32, buf: &[u8], offset: u64) -> Ext4Result<usize> {
         self.inner
-            .write_at_inode(ino, offset, buf)
+            .write_at_inode(ino, buf, offset)
             .map_err(Ext4Error::from_core_error)
     }
 
     /// 设置文件大小
     pub fn set_len(&mut self, ino: u32, len: u64) -> Ext4Result<()> {
         self.inner
-            .truncate_inode(ino, len)
+            .truncate_file(ino, len)
             .map_err(Ext4Error::from_core_error)
     }
 
@@ -313,14 +355,17 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     }
 
     /// 读取目录
-    pub fn read_dir(&mut self, dir_ino: u32, offset: u64) -> Ext4Result<DirReaderResult<'_, D>> {
+    pub fn read_dir(&mut self, dir_ino: u32, offset: u64) -> Ext4Result<DirReaderResult> {
         // 使用 read_dir_from_inode API
-        let reader = self
+        let entries = self
             .inner
-            .read_dir_from_inode(dir_ino, offset)
+            .read_dir_from_inode(dir_ino)
             .map_err(Ext4Error::from_core_error)?;
 
-        Ok(DirReaderResult { reader })
+        Ok(DirReaderResult {
+            entries,
+            current_index: offset as usize,
+        })
     }
 
     /// 创建文件或目录
@@ -354,6 +399,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     pub fn unlink(&mut self, parent_ino: u32, name: &str) -> Ext4Result<()> {
         self.inner
             .unlink_from_dir(parent_ino, name)
+            .map(|_| ())
             .map_err(Ext4Error::from_core_error)
     }
 
@@ -385,7 +431,9 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
         self.inner
             .with_inode_ref(ino, |inode_ref| {
                 let mut wrapper = InodeRefWrapper { inner: inode_ref };
-                f(&mut wrapper)
+                f(&mut wrapper).map_err(|e| {
+                    lwext4_core::Error::new(lwext4_core::ErrorKind::Io, e.message.unwrap_or("Error"))
+                })
             })
             .map_err(Ext4Error::from_core_error)
     }
