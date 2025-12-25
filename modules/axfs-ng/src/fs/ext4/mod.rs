@@ -2,11 +2,24 @@ mod fs;
 mod inode;
 mod util;
 
+// lwext4_core 支持（新增）
+mod hal;
+mod adapter;
+pub mod wrapper;
+
 #[allow(unused_imports)]
 use axdriver::{AxBlockDevice, prelude::BlockDriverOps};
 pub use fs::*;
 pub use inode::*;
 use lwext4_rust::{BlockDevice, Ext4Error, Ext4Result, ffi::EIO};
+
+// 导出 lwext4_core 相关类型
+pub use hal::ArceOsHal;
+pub use adapter::Ext4CoreDisk;
+
+// 导出 wrapper（可选，用于测试）
+#[allow(unused)]
+pub use wrapper as lwext4_core_compat;
 
 pub(crate) struct Ext4Disk(AxBlockDevice);
 
