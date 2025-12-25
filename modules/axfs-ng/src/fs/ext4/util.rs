@@ -1,21 +1,14 @@
 use axerrno::LinuxError;
 use axfs_ng_vfs::{NodeType, VfsError};
-use lwext4_rust::{Ext4Error, InodeType, SystemHal};
 
-use super::Ext4Disk;
+use super::{ArceOsHal, Ext4CoreDisk, wrapper};
 
-pub struct AxHal;
-impl SystemHal for AxHal {
-    fn now() -> Option<core::time::Duration> {
-        if cfg!(feature = "times") {
-            Some(axhal::time::wall_time())
-        } else {
-            None
-        }
-    }
-}
+// 使用 wrapper 层的类型，保持 API 兼容性
+pub type Ext4Error = wrapper::Ext4Error;
+pub type InodeType = wrapper::InodeType;
 
-pub type LwExt4Filesystem = lwext4_rust::Ext4Filesystem<AxHal, Ext4Disk>;
+// 使用 lwext4_core 通过 wrapper 层
+pub type LwExt4Filesystem = wrapper::Ext4Filesystem<ArceOsHal, Ext4CoreDisk>;
 
 pub fn into_vfs_err(err: Ext4Error) -> VfsError {
     let linux_error = LinuxError::try_from(err.code).unwrap_or(LinuxError::EIO);

@@ -10,9 +10,14 @@ pub struct ArceOsHal;
 
 impl SystemHal for ArceOsHal {
     fn now() -> Option<Duration> {
-        // TODO: 集成 ArceOS 的时间接口
-        // 暂时返回 None，表示不提供时间戳
-        // 这不影响核心文件系统功能，只会导致文件时间戳为 0
-        None
+        // 集成 ArceOS 的时间接口
+        #[cfg(feature = "times")]
+        {
+            Some(axhal::time::wall_time())
+        }
+        #[cfg(not(feature = "times"))]
+        {
+            None
+        }
     }
 }
