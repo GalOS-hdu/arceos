@@ -17,13 +17,19 @@ mod highlevel;
 pub use highlevel::*;
 
 pub fn init_filesystems(mut block_devs: AxDeviceContainer<AxBlockDevice>) {
-    info!("Initialize filesystem subsystem...");
+    info!("[axfs-ng] Initialize filesystem subsystem...");
 
     let dev = block_devs.take_one().expect("No block device found!");
-    info!("  use block device 0: {:?}", dev.device_name());
+    info!("[axfs-ng]   use block device 0: {:?}", dev.device_name());
 
-    let fs = fs::new_default(dev).expect("Failed to initialize filesystem");
-    info!("  filesystem type: {:?}", fs.name());
+    let fs = match fs::new_default(dev) {
+        Ok(fs) => fs,
+        Err(e) => {
+            error!("[axfs-ng]   Failed to mount filesystem: {:?}", e);
+            panic!("Failed to initialize filesystem: {:?}", e);
+        }
+    };
+    info!("[axfs-ng]   filesystem type: {:?}", fs.name());
 
     let mp = axfs_ng_vfs::Mountpoint::new_root(&fs);
     ROOT_FS_CONTEXT.call_once(|| FsContext::new(mp.root_location()));

@@ -179,6 +179,10 @@ impl<'a, 'b, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, 'b, D> {
             .unwrap_or(0)
     }
 
+    pub fn is_dir(&mut self) -> bool {
+        self.inner.is_dir().unwrap_or(false)
+    }
+
     pub fn set_mode(&mut self, mode: u32) {
         let _ = self.inner.set_mode(mode as u16);
     }

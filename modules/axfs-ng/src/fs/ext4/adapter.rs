@@ -18,18 +18,25 @@ impl Ext4CoreDisk {
 
 impl lwext4_core::BlockDevice for Ext4CoreDisk {
     fn block_size(&self) -> u32 {
+        // ext4 文件系统块大小（通常为 4096 字节）
+        // 注：这个值会在挂载时从superblock读取并验证
+        4096
+    }
+
+    fn sector_size(&self) -> u32 {
+        // 物理扇区大小
         use axdriver::prelude::BlockDriverOps;
         self.inner.block_size() as u32
     }
 
-    fn sector_size(&self) -> u32 {
-        // ext4 标准扇区大小为 512 字节
-        512
-    }
-
     fn total_blocks(&self) -> u64 {
+        // 总块数（以文件系统块为单位）
         use axdriver::prelude::BlockDriverOps;
-        self.inner.num_blocks()
+        let device_block_size = self.inner.block_size() as u64;
+        let fs_block_size = 4096u64;
+        let device_blocks = self.inner.num_blocks();
+        // 转换：设备块数 * 设备块大小 / 文件系统块大小
+        (device_blocks * device_block_size) / fs_block_size
     }
 
     fn read_blocks(&mut self, lba: u64, count: u32, buf: &mut [u8]) -> lwext4_core::Result<usize> {
