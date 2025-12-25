@@ -2,7 +2,7 @@
 //!
 //! 提供 AxBlockDevice 到 lwext4_core::BlockDevice 的适配器
 
-use axdriver::{AxBlockDevice, prelude::BlockDriverOps};
+use axdriver::AxBlockDevice;
 
 /// Adapter for AxBlockDevice to work with lwext4_core
 pub struct Ext4CoreDisk {

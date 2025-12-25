@@ -6,7 +6,7 @@ use alloc::{string::String, vec::Vec};
 use axerrno::LinuxError;
 use core::time::Duration;
 
-use super::{ArceOsHal, Ext4CoreDisk};
+use super::ArceOsHal;
 
 // ===== 类型重导出 =====
 
@@ -163,11 +163,11 @@ impl DirReaderResult {
 // ===== Inode 引用兼容层 =====
 
 /// Inode 引用包装器（兼容 lwext4_rust 的 with_inode_ref）
-pub struct InodeRefWrapper<'a, D: lwext4_core::BlockDevice> {
-    inner: &'a mut lwext4_core::InodeRef<'a, D>,
+pub struct InodeRefWrapper<'a, 'b, D: lwext4_core::BlockDevice> {
+    inner: &'a mut lwext4_core::InodeRef<'b, D>,
 }
 
-impl<'a, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, D> {
+impl<'a, 'b, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, 'b, D> {
     pub fn size(&mut self) -> u64 {
         self.inner.size().unwrap_or(0)
     }
@@ -347,14 +347,11 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
 
     /// 设置符号链接
     pub fn set_symlink(&mut self, ino: u32, target: &[u8]) -> Ext4Result<()> {
-        // 使用 with_inode_ref 来操作 inode
-        self.inner
-            .with_inode_ref(ino, |inode_ref| {
-                // 1. 设置大小为目标路径长度
-                inode_ref.set_size(target.len() as u64)?;
-
-                if target.len() < 60 {
-                    // 快速符号链接：存储在 inode.blocks 中
+        if target.len() < 60 {
+            // 快速符号链接：存储在 inode.blocks 中
+            self.inner
+                .with_inode_ref(ino, |inode_ref| {
+                    inode_ref.set_size(target.len() as u64)?;
                     inode_ref.with_inode_mut(|inode| {
                         let block_slice = unsafe {
                             core::slice::from_raw_parts_mut(
@@ -364,22 +361,27 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
                         };
                         block_slice[..target.len()].copy_from_slice(target);
                     })?;
-                } else {
-                    // 慢速符号链接：需要写入数据块
-                    // 注意：这要求 inode 已经是符号链接类型并且已初始化 extent 树
-                    // 直接写入第一个块
-                    let bytes_written = inode_ref.write_at(0, target)?;
-                    if bytes_written != target.len() {
-                        return Err(lwext4_core::Error::new(
-                            lwext4_core::ErrorKind::Io,
-                            "Failed to write symlink target"
-                        ));
-                    }
-                }
+                    Ok(())
+                })
+                .map_err(Ext4Error::from_core_error)
+        } else {
+            // 慢速符号链接：写入数据块
+            // 先设置大小
+            self.inner.truncate_file(ino, target.len() as u64)
+                .map_err(Ext4Error::from_core_error)?;
 
-                Ok(())
-            })
-            .map_err(Ext4Error::from_core_error)
+            // 写入数据
+            let written = self.inner.write_at_inode(ino, target, 0)
+                .map_err(Ext4Error::from_core_error)?;
+
+            if written != target.len() {
+                return Err(Ext4Error::new(
+                    LinuxError::EIO as i32,
+                    Some("Failed to write symlink target")
+                ));
+            }
+            Ok(())
+        }
     }
 
     /// 读取目录
@@ -454,7 +456,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     /// 操作 inode 引用
     pub fn with_inode_ref<F, R>(&mut self, ino: u32, f: F) -> Ext4Result<R>
     where
-        F: FnOnce(&mut InodeRefWrapper<'_, D>) -> Ext4Result<R>,
+        F: for<'a, 'b> FnOnce(&'a mut InodeRefWrapper<'a, 'b, D>) -> Ext4Result<R>,
     {
         self.inner
             .with_inode_ref(ino, |inode_ref| {
