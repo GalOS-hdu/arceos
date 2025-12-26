@@ -11,8 +11,11 @@ pub type InodeType = wrapper::InodeType;
 pub type LwExt4Filesystem = wrapper::Ext4Filesystem<ArceOsHal, Ext4CoreDisk>;
 
 pub fn into_vfs_err(err: Ext4Error) -> VfsError {
+    warn!("[ext4] Error occurred: code={}, message={:?}", err.code, err.message);
     let linux_error = LinuxError::try_from(err.code).unwrap_or(LinuxError::EIO);
-    VfsError::from(linux_error).canonicalize()
+    let vfs_err = VfsError::from(linux_error).canonicalize();
+    warn!("[ext4] Converted to VfsError: {:?}", vfs_err);
+    vfs_err
 }
 
 pub fn into_vfs_type(ty: InodeType) -> NodeType {
