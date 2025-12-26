@@ -388,6 +388,59 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
         }
     }
 
+    /// 读取符号链接的目标路径
+    pub fn readlink(&mut self, ino: u32) -> Ext4Result<Vec<u8>> {
+        use lwext4_core::consts::*;
+
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                // 验证是符号链接
+                let mode = inode_ref.with_inode(|inode| u16::from_le(inode.mode))?;
+                if (mode & EXT4_INODE_MODE_TYPE_MASK) != EXT4_INODE_MODE_SOFTLINK {
+                    return Err(lwext4_core::Error::new(
+                        lwext4_core::ErrorKind::InvalidInput,
+                        "Not a symlink",
+                    ));
+                }
+
+                let size = inode_ref.size()? as usize;
+                if size == 0 {
+                    return Ok(Vec::new());
+                }
+
+                // 读取目标路径
+                let result = if size < 60 {
+                    // 快速符号链接：从 inode.blocks 读取
+                    inode_ref.with_inode(|inode| {
+                        let block_slice = unsafe {
+                            core::slice::from_raw_parts(inode.blocks.as_ptr() as *const u8, size)
+                        };
+                        block_slice.to_vec()
+                    })?
+                } else {
+                    // 慢速符号链接：从数据块读取
+                    // 不能使用 read_extent_file（会拒绝符号链接），需要手动读取
+                    let block_addr = inode_ref.get_inode_dblk_idx(0, false)?;
+                    if block_addr == 0 {
+                        return Err(lwext4_core::Error::new(
+                            lwext4_core::ErrorKind::NotFound,
+                            "Symlink data block not found",
+                        ));
+                    }
+
+                    // 获取 block_size
+                    let block_size = inode_ref.superblock().block_size() as usize;
+                    let mut block_buf = alloc::vec![0u8; block_size];
+
+                    // 直接读取块
+                    inode_ref.bdev().read_block(block_addr, &mut block_buf)?;
+                    block_buf[..size].to_vec()
+                };
+                Ok(result)
+            })
+            .map_err(Ext4Error::from_core_error)
+    }
+
     /// 读取目录
     pub fn read_dir(&mut self, dir_ino: u32, offset: u64) -> Ext4Result<DirReaderResult> {
         // 使用 read_dir_from_inode API
