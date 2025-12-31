@@ -1,11 +1,11 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc,collections::BTreeMap,vec::Vec};
 use core::{fmt, ops::DerefMut};
 
 use axerrno::{AxError, AxResult, ax_bail};
 use axhal::{
     mem::phys_to_virt,
     paging::{MappingFlags, PageTable},
-    trap::PageFaultFlags,
+    trap::PageFaultFlags
 };
 use axsync::Mutex;
 use memory_addr::{
@@ -20,6 +20,7 @@ pub struct AddrSpace {
     va_range: VirtAddrRange,
     areas: MemorySet<Backend>,
     pt: PageTable,
+    dontfork_areas: BTreeMap<VirtAddr,VirtAddr>,
 }
 
 impl AddrSpace {
@@ -64,6 +65,7 @@ impl AddrSpace {
             va_range: VirtAddrRange::from_start_size(base, size),
             areas: MemorySet::new(),
             pt: PageTable::try_new().map_err(|_| AxError::NoMemory)?,
+            dontfork_areas: BTreeMap::new(), // 初始化
         })
     }
 
@@ -362,9 +364,12 @@ impl AddrSpace {
         let new_aspace_clone = new_aspace.clone();
 
         let mut guard = new_aspace.lock();
-
-        let mut self_modify = self.pt.modify();
         for area in self.areas.iter() {
+            // 检查该区域是否应该被fork
+            if !self.should_fork(area.start(), area.size()) {
+                continue;
+            }
+            let mut self_modify = self.pt.modify();
             let new_backend = area.backend().clone_map(
                 area.va_range(),
                 area.flags(),
@@ -380,6 +385,102 @@ impl AddrSpace {
         drop(guard);
 
         Ok(new_aspace)
+    }
+    /// Clears the area by removing mappings but preserving the address space.
+    /// 
+    /// Returns an error if the address range is out of the address space or not
+    /// aligned.
+    pub fn clear_area(&mut self,mut start: VirtAddr, size: usize) -> AxResult {
+        self.validate_region(start, size)?;
+        let end = start + size;
+
+        let mut modify = self.pt.modify();
+        while let Some(area) = self.areas.find(start) {
+            let range = VirtAddrRange::new(start, area.end().min(end));
+            area.backend()
+                .clear(range, area.flags(), &mut modify)?;
+            start = area.end();
+            assert!(start.is_aligned_4k());
+            if start >= end {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+    pub fn set_dontfork(&mut self, start: VirtAddr, size: usize) -> AxResult {
+        self.validate_region(start, size)?;
+        let end = start + size;
+        self.dontfork_areas.insert(start, end);
+        Ok(())
+    }
+    pub fn set_dofork(&mut self, start: VirtAddr, size: usize) -> AxResult {
+        self.validate_region(start, size)?;
+        let end = start + size;
+        
+        let mut to_remove = Vec::new();
+        let mut to_insert = Vec::new();
+        
+        for (range_start, range_end) in &self.dontfork_areas {
+            let range = VirtAddrRange::new(*range_start, *range_end);
+            let target = VirtAddrRange::new(start, end);
+            
+            if range.overlaps(target){
+                continue;
+            }
+            
+            to_remove.push(*range_start);
+            
+            // 处理重叠区域的前后部分
+            if *range_start < start {
+                to_insert.push((*range_start, start));
+            }
+            if *range_end > end {
+                to_insert.push((end, *range_end));
+            }
+        }
+        
+        // 移除旧的区域
+        for start_addr in to_remove {
+            self.dontfork_areas.remove(&start_addr);
+        }
+        
+        // 插入新的区域
+        for (new_start, new_end) in to_insert {
+            self.dontfork_areas.insert(new_start, new_end);
+        }
+        
+        Ok(())
+    }
+    fn should_fork(&self, start: VirtAddr, size: usize) -> bool {
+        let end = start + size;
+        
+        for (range_start, range_end) in &self.dontfork_areas {
+            if start < *range_end && end > *range_start {
+                return false;
+            }
+        }
+        
+        true
+    }
+        /// Sync a memory region to the backing store.
+    pub fn sync_area(&mut self, mut start: VirtAddr, size: usize) -> AxResult {
+        self.validate_region(start, size)?;
+        let end = start + size;
+
+        let mut modify = self.pt.modify();
+        while let Some(area) = self.areas.find(start) {
+            let range = VirtAddrRange::new(start, area.end().min(end));
+            area.backend()
+                .sync(range, area.flags(), &mut modify)?;
+            start = area.end();
+            assert!(start.is_aligned_4k());
+            if start >= end {
+                break;
+            }
+        }
+
+        Ok(())
     }
 }
 

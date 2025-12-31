@@ -64,7 +64,7 @@ GRAPHIC ?= n
 INPUT ?= n
 DEBUG ?= n
 BUS ?= pci
-MEM ?= 128M
+MEM ?= 4G
 ACCEL ?=
 QEMU_ARGS ?=
 

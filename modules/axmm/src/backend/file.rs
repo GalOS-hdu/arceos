@@ -220,6 +220,37 @@ impl BackendOps for FileBackend {
         inner.register_listener(new_aspace);
         Ok(Backend::File(FileBackend(inner)))
     }
+    fn clear(
+        &self,
+        _range: VirtAddrRange,
+        _flags: MappingFlags,
+        pt: &mut PageTableMut,
+    ) -> AxResult {
+        debug!("File::clear: {_range:?}");
+        for addr in pages_in(_range, PageSize::Size4K)? {
+            match pt.unmap(addr) {
+                Ok(_) | Err(PagingError::NotMapped) => {}
+                Err(err) => {
+                    return Err(err.into());
+                }
+            }
+        }
+        Ok(())
+    }
+    fn sync(
+        &self,
+        range: VirtAddrRange,
+        _flags: MappingFlags,
+        _pt: &mut PageTableMut,
+    ) -> AxResult {
+        debug!("File::sync: {:?}", range);
+        // 调用CachedFile的sync方法将缓存脏页写回文件
+        self.0.cache.sync(false).map_err(|e| {
+            debug!("File::sync failed: {:?}", e);
+            AxError::Io
+        })?;
+        Ok(())
+    }
 }
 
 impl Backend {

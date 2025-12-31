@@ -1,12 +1,17 @@
+#[cfg(feature = "bus-pci")]
 use axdriver_pci::{
     BarInfo, Cam, Command, DeviceFunction, HeaderType, MemoryBarType, PciRangeAllocator, PciRoot,
 };
+#[cfg(feature = "bus-pci")]
 use axhal::mem::phys_to_virt;
 
+#[cfg(feature = "bus-pci")]
 use crate::{AllDevices, prelude::*};
 
+#[cfg(feature = "bus-pci")]
 const PCI_BAR_NUM: u8 = 6;
 
+#[cfg(feature = "bus-pci")]
 fn config_pci_device(
     root: &mut PciRoot,
     bdf: DeviceFunction,
@@ -83,6 +88,7 @@ fn config_pci_device(
     Ok(())
 }
 
+#[cfg(feature = "bus-pci")]
 impl AllDevices {
     pub(crate) fn probe_bus_devices(&mut self) {
         let base_vaddr = phys_to_virt(axconfig::devices::PCI_ECAM_BASE.into());

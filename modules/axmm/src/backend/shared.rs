@@ -2,7 +2,7 @@ use alloc::{sync::Arc, vec::Vec};
 use core::ops::Deref;
 
 use axerrno::AxResult;
-use axhal::paging::{MappingFlags, PageSize, PageTableMut};
+use axhal::paging::{MappingFlags, PageSize, PageTableMut,PagingError};
 use axsync::Mutex;
 use memory_addr::{MemoryAddr, PhysAddr, VirtAddr, VirtAddrRange};
 
@@ -101,6 +101,22 @@ impl BackendOps for SharedBackend {
         _new_aspace: &Arc<Mutex<AddrSpace>>,
     ) -> AxResult<Backend> {
         Ok(Backend::Shared(self.clone()))
+    }
+    fn clear(
+        &self,
+        _range: VirtAddrRange,
+        _flags: MappingFlags,
+        pt: &mut PageTableMut,
+    ) -> AxResult {
+        debug!("Shared::clear: {_range:?}");
+        for addr in pages_in(_range, self.pages.size)? {
+            if let Err(err) = pt.unmap(addr) {
+                if !matches!(err, PagingError::NotMapped) {
+                    return Err(err.into());
+                }
+            }
+        }
+        Ok(())
     }
 }
 

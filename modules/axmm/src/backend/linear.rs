@@ -1,13 +1,12 @@
 use alloc::sync::Arc;
 
 use axerrno::AxResult;
-use axhal::paging::{MappingFlags, PageSize, PageTableMut};
+use axhal::paging::{MappingFlags, PageSize, PageTableMut,PagingError};
 use axsync::Mutex;
 use memory_addr::{PhysAddr, PhysAddrRange, VirtAddr, VirtAddrRange};
-
 use crate::{
     AddrSpace,
-    backend::{Backend, BackendOps},
+    backend::{Backend, BackendOps,pages_in},
 };
 
 /// Linear mapping backend.
@@ -54,6 +53,22 @@ impl BackendOps for LinearBackend {
         _new_aspace: &Arc<Mutex<AddrSpace>>,
     ) -> AxResult<Backend> {
         Ok(Backend::Linear(self.clone()))
+    }
+    fn clear(
+        &self,
+        _range: VirtAddrRange,
+        _flags: MappingFlags,
+        pt: &mut PageTableMut,
+    ) -> AxResult {
+        debug!("Linear::clear: {_range:?}");
+        for addr in pages_in(_range, PageSize::Size4K)? {
+            if let Err(err) = pt.unmap(addr) {
+                if !matches!(err, PagingError::NotMapped) {
+                    return Err(err.into());
+                }
+            }
+        }
+        Ok(())
     }
 }
 
