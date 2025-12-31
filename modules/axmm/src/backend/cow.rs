@@ -202,6 +202,24 @@ impl BackendOps for CowBackend {
 
         Ok(Backend::Cow(self.clone()))
     }
+    
+    fn clear(
+        &self,
+        _range: VirtAddrRange,
+        _flags: MappingFlags,
+        pt: &mut PageTableMut,
+    ) -> AxResult {
+        debug!("Cow::clear: {_range:?}");
+        for addr in pages_in(_range, self.size)? {
+            if let Ok((frame, _flags, page_size)) = pt.unmap(addr) {
+                assert_eq!(page_size, self.size);
+                if dec_frame_ref(frame) == 1 {
+                    dealloc_frame(frame, self.size);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Backend {

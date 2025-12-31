@@ -1,6 +1,9 @@
 //! Dummy implementation of platform-related interfaces defined in [`axplat`].
 
 #[cfg(feature = "irq")]
+use core::option;
+
+#[cfg(feature = "irq")]
 use axplat::irq::{IpiTarget, IrqHandler, IrqIf};
 use axplat::{
     console::ConsoleIf,
@@ -125,7 +128,9 @@ impl IrqIf for DummyIrq {
         None
     }
 
-    fn handle(_irq: usize) {}
+    fn handle(_irq: usize)->Option<usize>{
+        None
+    }
 
     fn send_ipi(_irq: usize, _target: IpiTarget) {}
 }

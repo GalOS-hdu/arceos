@@ -96,6 +96,23 @@ pub trait BackendOps {
         new_pt: &mut PageTableMut,
         new_aspace: &Arc<Mutex<AddrSpace>>,
     ) -> AxResult<Backend>;
+
+    fn clear(
+        &self,
+        _range: VirtAddrRange,
+        _flags:MappingFlags,
+        _pt: &mut PageTableMut,
+    ) -> AxResult{
+            Ok(())
+    }
+    fn sync(
+        &self,
+        _range: VirtAddrRange,
+        _flags: MappingFlags,
+        _pt: &mut PageTableMut,
+    ) -> AxResult {
+        Ok(())
+    }
 }
 
 /// A unified enum type for different memory mapping backends.
