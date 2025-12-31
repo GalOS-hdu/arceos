@@ -11,10 +11,21 @@ pub type InodeType = wrapper::InodeType;
 pub type LwExt4Filesystem = wrapper::Ext4Filesystem<ArceOsHal, Ext4CoreDisk>;
 
 pub fn into_vfs_err(err: Ext4Error) -> VfsError {
-    warn!("[ext4] Error occurred: code={}, message={:?}", err.code, err.message);
+    // 只记录非 NotFound 的错误，因为 NotFound 是正常的文件系统操作
+    // （例如：程序检查文件是否存在）
     let linux_error = LinuxError::try_from(err.code).unwrap_or(LinuxError::EIO);
+
+    if linux_error != LinuxError::ENOENT {
+        warn!("[ext4] Error occurred: code={} ({:?}), message={:?}",
+              err.code, linux_error, err.message);
+    }
+
     let vfs_err = VfsError::from(linux_error).canonicalize();
-    warn!("[ext4] Converted to VfsError: {:?}", vfs_err);
+
+    if linux_error != LinuxError::ENOENT {
+        warn!("[ext4] Converted to VfsError: {:?}", vfs_err);
+    }
+
     vfs_err
 }
 

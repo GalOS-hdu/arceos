@@ -330,23 +330,104 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
 
     /// 读取文件数据
     pub fn read_at(&mut self, ino: u32, buf: &mut [u8], offset: u64) -> Ext4Result<usize> {
-        self.inner
+        if buf.len() > 0 {
+            info!("[ext4] READ: ino={}, len={}, offset={}", ino, buf.len(), offset);
+        }
+
+        let result = self.inner
             .read_at_inode(ino, buf, offset)
-            .map_err(Ext4Error::from_core_error)
+            .map_err(Ext4Error::from_core_error);
+
+        match result {
+            Ok(n) => {
+                info!("[ext4] READ SUCCESS: ino={}, read={}", ino, n);
+                Ok(n)
+            }
+            Err(e) => {
+                // 检查是否是"块不存在"错误（稀疏文件的空洞）
+                // 对于稀疏文件，读取未分配的块应该返回零，而不是错误
+                if e.code == 2 && e.message == Some("Logical block not found in extent tree") {
+                    // 这是稀疏文件的空洞，填充零并返回成功
+                    info!("[ext4] READ sparse hole: ino={}, len={}, offset={}, returning zeros",
+                          ino, buf.len(), offset);
+                    buf.fill(0);
+                    Ok(buf.len())
+                } else {
+                    // 其他错误正常报告
+                    warn!("[ext4] READ FAILED: ino={}, len={}, offset={}, error={:?}", ino, buf.len(), offset, e);
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// 写入文件数据
     pub fn write_at(&mut self, ino: u32, buf: &[u8], offset: u64) -> Ext4Result<usize> {
-        self.inner
+        // 记录所有写入操作（降低阈值以捕获小文件写入）
+        if buf.len() > 0 {
+            info!("[ext4] WRITE: ino={}, len={}, offset={}", ino, buf.len(), offset);
+        }
+
+        let result = self.inner
             .write_at_inode(ino, buf, offset)
-            .map_err(Ext4Error::from_core_error)
+            .map_err(Ext4Error::from_core_error);
+
+        match &result {
+            Ok(written) => info!("[ext4] WRITE SUCCESS: ino={}, written={}", ino, written),
+            Err(e) => warn!("[ext4] WRITE FAILED: ino={}, len={}, offset={}, error={:?}",
+                           ino, buf.len(), offset, e),
+        }
+
+        result
     }
 
     /// 设置文件大小
     pub fn set_len(&mut self, ino: u32, len: u64) -> Ext4Result<()> {
-        self.inner
-            .truncate_file(ino, len)
-            .map_err(Ext4Error::from_core_error)
+        info!("[ext4] SET_LEN: ino={}, new_len={}", ino, len);
+
+        // 获取当前文件大小
+        let current_size = self.inner
+            .with_inode_ref(ino, |inode| inode.size())
+            .map_err(Ext4Error::from_core_error)?;
+
+        if len < current_size {
+            // 缩小文件：使用 truncate
+            self.inner
+                .truncate_file(ino, len)
+                .map_err(Ext4Error::from_core_error)
+        } else if len > current_size {
+            // 扩展文件：写入零数据填充到目标大小
+            // lwext4_core 的 get_blocks 现在支持批量块分配，会自动创建大的连续 extent
+            const BLOCK_SIZE: u64 = 4096;
+            static ZERO_BLOCK: [u8; 4096] = [0; 4096];
+
+            let old_blocks = current_size.div_ceil(BLOCK_SIZE);
+            let new_blocks = len.div_ceil(BLOCK_SIZE);
+
+            info!(
+                "[ext4] SET_LEN: ino={}, extending from {} to {}, old_blocks={}, new_blocks={}",
+                ino, current_size, len, old_blocks, new_blocks
+            );
+
+            // 逐块写入零数据
+            // get_blocks 会尝试批量分配多个连续块，减少 extent 数量
+            for block_num in old_blocks..new_blocks {
+                let offset = block_num * BLOCK_SIZE;
+                let write_len = BLOCK_SIZE.min(len - offset);
+
+                info!("[ext4] SET_LEN: writing block {} at offset {}, len={}", block_num, offset, write_len);
+                self.inner
+                    .write_at_inode(ino, &ZERO_BLOCK[..write_len as usize], offset)
+                    .map_err(Ext4Error::from_core_error)?;
+                info!("[ext4] SET_LEN: block {} written successfully", block_num);
+            }
+
+            info!("[ext4] SET_LEN: all blocks written");
+            Ok(())
+        } else {
+            // 大小不变：什么都不做
+            Ok(())
+        }
     }
 
     /// 设置符号链接
@@ -370,11 +451,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
                 .map_err(Ext4Error::from_core_error)
         } else {
             // 慢速符号链接：写入数据块
-            // 先设置大小
-            self.inner.truncate_file(ino, target.len() as u64)
-                .map_err(Ext4Error::from_core_error)?;
-
-            // 写入数据
+            // write_at_inode 会自动更新文件大小，无需手动调用 truncate_file
             let written = self.inner.write_at_inode(ino, target, 0)
                 .map_err(Ext4Error::from_core_error)?;
 
@@ -477,9 +554,31 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
             }
         };
 
-        self.inner
-            .create_in_dir(parent_ino, name, file_type, mode as u16)
-            .map_err(Ext4Error::from_core_error)
+        // 如果 mode 的权限位为 0，应用默认权限
+        // 这确保文件始终有合理的权限，即使应用程序传入 mode=0
+        // 这是标准的 Unix 行为，防止创建完全无权限的文件
+        let effective_mode = if mode & 0o777 == 0 {
+            match inode_type {
+                InodeType::Directory => 0o755,  // rwxr-xr-x
+                _ => 0o644,  // rw-r--r--
+            }
+        } else {
+            mode & 0o777  // 只保留权限位
+        };
+
+        info!("[ext4] CREATE: parent_ino={}, name={:?}, type={:?}, mode={:#o}, effective_mode={:#o}",
+              parent_ino, name, inode_type, mode, effective_mode);
+
+        let result = self.inner
+            .create_in_dir(parent_ino, name, file_type, effective_mode as u16)
+            .map_err(Ext4Error::from_core_error);
+
+        match &result {
+            Ok(ino) => info!("[ext4] CREATE SUCCESS: new_ino={}", ino),
+            Err(e) => warn!("[ext4] CREATE FAILED: error={:?}", e),
+        }
+
+        result
     }
 
     /// 删除文件

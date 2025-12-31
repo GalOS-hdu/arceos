@@ -498,7 +498,16 @@ impl CachedFile {
         if self.in_memory {
             page.data().fill(0);
         } else {
-            file.read_at(page.data(), pn as u64 * PAGE_SIZE as u64)?;
+            info!("[CachedFile] page_or_insert: reading page {} at offset {}", pn, pn as u64 * PAGE_SIZE as u64);
+            match file.read_at(page.data(), pn as u64 * PAGE_SIZE as u64) {
+                Ok(n) => {
+                    info!("[CachedFile] page_or_insert: read {} bytes successfully", n);
+                }
+                Err(e) => {
+                    warn!("[CachedFile] page_or_insert: read FAILED for page {}, error={:?}", pn, e);
+                    return Err(e);
+                }
+            }
         }
         cache.put(pn, page);
         Ok((cache.get_mut(&pn).unwrap(), evicted))
@@ -524,7 +533,17 @@ impl CachedFile {
         page_initial: impl FnOnce(&FileNode) -> VfsResult<T>,
         mut page_each: impl FnMut(T, &mut PageCache, Range<usize>) -> VfsResult<T>,
     ) -> VfsResult<T> {
-        let file = self.inner.entry().as_file()?;
+        info!("[CachedFile] with_pages: attempting to get entry, range={:?}", range);
+        let file = match self.inner.entry().as_file() {
+            Ok(f) => {
+                info!("[CachedFile] with_pages: got entry successfully");
+                f
+            }
+            Err(e) => {
+                warn!("[CachedFile] with_pages: FAILED to get entry, error={:?}", e);
+                return Err(e);
+            }
+        };
         let mut initial = page_initial(file)?;
         let start_page = (range.start / PAGE_SIZE as u64) as u32;
         let end_page = range.end.div_ceil(PAGE_SIZE as u64) as u32;
@@ -565,11 +584,17 @@ impl CachedFile {
 
     fn write_at_locked(&self, buf: &mut impl Buf, offset: u64) -> VfsResult<usize> {
         let end = offset + buf.remaining() as u64;
+        info!("[CachedFile] write_at_locked: offset={}, len={}, end={}", offset, buf.remaining(), end);
         self.with_pages(
             offset..end,
             |file| {
-                if end > file.len()? {
+                let current_len = file.len()?;
+                info!("[CachedFile] write_at_locked: current file len={}, end={}, need_extend={}",
+                      current_len, end, end > current_len);
+                if end > current_len {
+                    info!("[CachedFile] write_at_locked: calling set_len({})", end);
                     file.set_len(end)?;
+                    info!("[CachedFile] write_at_locked: set_len completed");
                 }
                 Ok(0)
             },
