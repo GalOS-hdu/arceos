@@ -41,7 +41,9 @@ default-features = false
 optional = true
 
 [dependencies.lwext4_core]
-path = "/home/c20h30o2/files/lwext4-rust/lwext4-rust/lwext4_core"
+git = "https://github.com/c20h30o2/lwext4_core.git"
+rev = "b69aa0a"
+default-features = true
 optional = true
 
 [dependencies.fatfs]
