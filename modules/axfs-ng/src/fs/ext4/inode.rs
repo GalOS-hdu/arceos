@@ -123,7 +123,8 @@ impl NodeOps for Inode {
     }
 
     fn sync(&self, _data_only: bool) -> VfsResult<()> {
-        Ok(())
+        // 刷新文件系统缓存，确保所有脏数据写入磁盘
+        self.fs.flush()
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {

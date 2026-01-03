@@ -257,8 +257,8 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
 
     /// 刷新文件系统
     pub fn flush(&mut self) -> Ext4Result<()> {
-        // lwext4_core 的写入是同步的，不需要显式 flush
-        Ok(())
+        // 刷新块缓存中的所有脏数据到磁盘
+        self.inner.flush().map_err(Ext4Error::from_core_error)
     }
 
     /// 查找目录项
@@ -320,7 +320,7 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
             gid: metadata.gid,
             size: metadata.size,
             block_size: 4096, // TODO: 从文件系统获取
-            blocks: (metadata.size + 4095) / 4096,
+            blocks: metadata.blocks_count,
             atime: metadata.atime as u64,
             mtime: metadata.mtime as u64,
             ctime: metadata.ctime as u64,
@@ -422,7 +422,17 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
                 info!("[ext4] SET_LEN: block {} written successfully", block_num);
             }
 
-            info!("[ext4] SET_LEN: all blocks written");
+            // 🔧 关键修复：显式更新 inode 的 size 字段到目标长度
+            // 即使没有分配新块（循环未执行），也要确保 size 正确
+            self.inner
+                .with_inode_ref(ino, |inode_ref| {
+                    inode_ref.set_size(len)?;
+                    inode_ref.mark_dirty()?;
+                    Ok(())
+                })
+                .map_err(Ext4Error::from_core_error)?;
+
+            info!("[ext4] SET_LEN: all blocks written, size updated to {}", len);
             Ok(())
         } else {
             // 大小不变：什么都不做
@@ -621,6 +631,14 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
                     lwext4_core::Error::new(lwext4_core::ErrorKind::Io, e.message.unwrap_or("Error"))
                 })
             })
+            .map_err(Ext4Error::from_core_error)
+    }
+
+    /// Deferred deletion: 当VFS层释放最后一个对inode的引用时调用
+    /// 如果 i_nlink == 0，则释放inode的所有资源
+    pub fn drop_inode(&mut self, ino: u32) -> Ext4Result<()> {
+        self.inner
+            .drop_inode(ino)
             .map_err(Ext4Error::from_core_error)
     }
 }

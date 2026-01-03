@@ -115,4 +115,17 @@ impl lwext4_core::BlockDevice for Ext4CoreDisk {
 
         Ok(expected_size)
     }
+
+    fn flush(&mut self) -> lwext4_core::Result<()> {
+        use axdriver::prelude::BlockDriverOps;
+
+        self.inner
+            .flush()
+            .map_err(|e| {
+                warn!("[adapter] Failed to flush: error={:?}", e);
+                lwext4_core::Error::new(lwext4_core::ErrorKind::Io, "Block flush failed")
+            })?;
+
+        Ok(())
+    }
 }
