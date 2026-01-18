@@ -41,8 +41,9 @@ default-features = false
 optional = true
 
 [dependencies.lwext4_core]
-git = "https://github.com/c20h30o2/lwext4_core.git"
-rev = "b69aa0a"
+git = "https://github.com/GalOS-hdu/lwext4_core.git"
+rev = "94eb56a"
+# path = "/home/c20h30o2/files/lwext4-rust/lwext4_core"
 default-features = true
 optional = true
 
