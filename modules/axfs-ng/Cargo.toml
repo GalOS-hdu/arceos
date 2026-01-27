@@ -9,9 +9,8 @@ homepage.workspace = true
 [features]
 default = []
 fat = ["dep:fatfs"]
-ext4 = ["dep:lwext4_rust", "dep:lwext4_core"]
+ext4 = ["dep:lwext4_core"]
 times = []
-std = ["lwext4_rust?/std"]
 
 [dependencies]
 axalloc = { workspace = true }
@@ -33,12 +32,6 @@ lru = "0.16.0"
 scope-local = { workspace = true }
 slab = { version = "0.4.9", default-features = false }
 spin = { workspace = true }
-
-[dependencies.lwext4_rust]
-git = "https://github.com/Starry-OS/lwext4_rust.git"
-rev = "033fa2c"
-default-features = false
-optional = true
 
 [dependencies.lwext4_core]
 git = "https://github.com/GalOS-hdu/lwext4_core.git"
