@@ -636,10 +636,11 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     ///
     /// 返回所有扩展属性名称（以 null 结尾的字符串列表）
     pub fn listxattr(&mut self, ino: u32, buffer: &mut [u8]) -> Ext4Result<usize> {
-        self.with_inode_ref(ino, |inode_ref| {
-            lwext4_core::xattr::list(inode_ref, buffer)
-                .map_err(|e| lwext4_core::Error::new(e.kind(), e.message()))
-        })
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                lwext4_core::xattr::list(inode_ref, buffer)
+            })
+            .map_err(Ext4Error::from_core_error)
     }
 
     /// 获取扩展属性值
@@ -651,10 +652,11 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     ///
     /// 返回属性值的长度
     pub fn getxattr(&mut self, ino: u32, name: &str, buffer: &mut [u8]) -> Ext4Result<usize> {
-        self.with_inode_ref(ino, |inode_ref| {
-            lwext4_core::xattr::get(inode_ref, name, buffer)
-                .map_err(|e| lwext4_core::Error::new(e.kind(), e.message()))
-        })
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                lwext4_core::xattr::get(inode_ref, name, buffer)
+            })
+            .map_err(Ext4Error::from_core_error)
     }
 
     /// 设置扩展属性
@@ -664,10 +666,11 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     /// * `name` - 属性名（含命名空间前缀）
     /// * `value` - 属性值
     pub fn setxattr(&mut self, ino: u32, name: &str, value: &[u8]) -> Ext4Result<()> {
-        self.with_inode_ref(ino, |inode_ref| {
-            lwext4_core::xattr::set(inode_ref, name, value)
-                .map_err(|e| lwext4_core::Error::new(e.kind(), e.message()))
-        })
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                lwext4_core::xattr::set(inode_ref, name, value)
+            })
+            .map_err(Ext4Error::from_core_error)
     }
 
     /// 删除扩展属性
@@ -676,9 +679,10 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     /// * `ino` - inode 编号
     /// * `name` - 要删除的属性名
     pub fn removexattr(&mut self, ino: u32, name: &str) -> Ext4Result<()> {
-        self.with_inode_ref(ino, |inode_ref| {
-            lwext4_core::xattr::remove(inode_ref, name)
-                .map_err(|e| lwext4_core::Error::new(e.kind(), e.message()))
-        })
+        self.inner
+            .with_inode_ref(ino, |inode_ref| {
+                lwext4_core::xattr::remove(inode_ref, name)
+            })
+            .map_err(Ext4Error::from_core_error)
     }
 }
