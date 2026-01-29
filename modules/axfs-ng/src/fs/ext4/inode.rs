@@ -134,6 +134,35 @@ impl NodeOps for Inode {
     fn flags(&self) -> NodeFlags {
         NodeFlags::BLOCKING
     }
+
+    fn listxattr(&self, buffer: &mut [u8]) -> VfsResult<usize> {
+        self.fs
+            .lock()
+            .listxattr(self.ino, buffer)
+            .map_err(into_vfs_err)
+    }
+
+    fn getxattr(&self, name: &str, buffer: &mut [u8]) -> VfsResult<usize> {
+        self.fs
+            .lock()
+            .getxattr(self.ino, name, buffer)
+            .map_err(into_vfs_err)
+    }
+
+    fn setxattr(&self, name: &str, value: &[u8], _flags: u32) -> VfsResult<()> {
+        // TODO: 处理 flags (XATTR_CREATE, XATTR_REPLACE)
+        self.fs
+            .lock()
+            .setxattr(self.ino, name, value)
+            .map_err(into_vfs_err)
+    }
+
+    fn removexattr(&self, name: &str) -> VfsResult<()> {
+        self.fs
+            .lock()
+            .removexattr(self.ino, name)
+            .map_err(into_vfs_err)
+    }
 }
 
 impl FileNodeOps for Inode {
