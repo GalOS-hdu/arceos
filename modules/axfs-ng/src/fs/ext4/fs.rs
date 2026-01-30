@@ -39,11 +39,34 @@ impl Ext4Filesystem {
     pub(crate) fn lock(&self) -> MutexGuard<LwExt4Filesystem> {
         self.inner.lock()
     }
+
+    /// 直接执行 rename 操作，绕过 VFS ancestor 检查
+    /// 用于修复 VFS 层 is_ancestor_of 误判问题
+    pub fn direct_rename(
+        &self,
+        src_dir_ino: u32,
+        src_name: &str,
+        dst_dir_ino: u32,
+        dst_name: &str,
+    ) -> VfsResult<()> {
+        self.inner
+            .lock()
+            .rename(src_dir_ino, src_name, dst_dir_ino, dst_name)
+            .map_err(into_vfs_err)
+    }
 }
 
 unsafe impl Send for Ext4Filesystem {}
 
 unsafe impl Sync for Ext4Filesystem {}
+
+impl Ext4Filesystem {
+    /// 从 FilesystemOps trait object 尝试获取 Ext4Filesystem 引用
+    /// 这是一个 unsafe 的辅助方法，仅当确认是 ext4 时才调用
+    pub unsafe fn from_ops_unchecked(ops: &dyn FilesystemOps) -> &Self {
+        &*(ops as *const dyn FilesystemOps as *const Self)
+    }
+}
 
 impl FilesystemOps for Ext4Filesystem {
     fn name(&self) -> &str {
