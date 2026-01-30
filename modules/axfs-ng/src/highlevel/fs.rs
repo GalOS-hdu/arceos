@@ -190,6 +190,49 @@ impl FsContext {
         }
     }
 
+    /// Resolves a path for rename operation with proper POSIX semantics.
+    ///
+    /// This handles the special case where new_path is an existing directory:
+    /// - `mv file.txt dir/` should move file.txt INTO dir as dir/file.txt
+    /// - `mv file.txt dir/newname.txt` should move and rename
+    /// - `mv file.txt newname.txt` should rename in same directory
+    ///
+    /// Returns `(target_dir, target_name)` where the file should be placed.
+    pub fn resolve_for_rename<'a>(
+        &self,
+        new_path: &'a Path,
+        old_name: &str,
+    ) -> VfsResult<(Location, Cow<'a, str>)> {
+        let mut follow_count = 0;
+        let (dir, name) = self.resolve_inner(new_path, &mut follow_count)?;
+
+        if let Some(name) = name {
+            // new_path has a filename component: "dir/newname.txt"
+            // Check if it's an existing directory
+            match self.lookup(&dir, name, &mut follow_count) {
+                Ok(child) if child.node_type() == NodeType::Directory => {
+                    // new_path is an existing directory: move INTO it with old_name
+                    // e.g., mv file.txt existing_dir/ -> existing_dir/file.txt
+                    Ok((child, Cow::Owned(old_name.to_owned())))
+                }
+                Ok(_) => {
+                    // new_path is an existing file: replace it with new name
+                    Ok((dir, Cow::Borrowed(name)))
+                }
+                Err(VfsError::NotFound) => {
+                    // new_path doesn't exist: create with the given name
+                    Ok((dir, Cow::Borrowed(name)))
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            // new_path has no filename component: "dir/"
+            // This means new_path IS a directory - move INTO it with old_name
+            // e.g., mv file.txt dir/ -> dir/file.txt
+            Ok((dir, Cow::Owned(old_name.to_owned())))
+        }
+    }
+
     /// Retrieves metadata for the file.
     pub fn metadata(&self, path: impl AsRef<Path>) -> VfsResult<Metadata> {
         self.resolve(path)?.metadata()

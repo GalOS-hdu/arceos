@@ -16,6 +16,10 @@ mod fs;
 mod highlevel;
 pub use highlevel::*;
 
+// 导出 ext4 以便 syscall 层访问 Inode 类型进行 downcast
+#[cfg(feature = "ext4")]
+pub use fs::ext4;
+
 pub fn init_filesystems(mut block_devs: AxDeviceContainer<AxBlockDevice>) {
     info!("[axfs-ng] Initialize filesystem subsystem...");
 
