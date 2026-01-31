@@ -597,18 +597,9 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
         dst_parent: u32,
         dst_name: &str,
     ) -> Ext4Result<()> {
-        info!(
-            "[EXT4 RENAME] src_parent={}, src_name={:?}, dst_parent={}, dst_name={:?}",
-            src_parent, src_name, dst_parent, dst_name
-        );
-        let result = self.inner
+        self.inner
             .rename_inode(src_parent, src_name, dst_parent, dst_name)
-            .map_err(Ext4Error::from_core_error);
-        match &result {
-            Ok(_) => info!("[EXT4 RENAME] SUCCESS"),
-            Err(e) => warn!("[EXT4 RENAME] FAILED: {:?}", e),
-        }
-        result
+            .map_err(Ext4Error::from_core_error)
     }
 
     /// 创建硬链接
