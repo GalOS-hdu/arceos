@@ -191,12 +191,36 @@ impl<'a, 'b, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, 'b, D> {
         let _ = self.inner.set_owner(uid, gid);
     }
 
+    /// Set access time (atime)
+    ///
+    /// Note: Current lwext4 implementation only supports second precision.
+    /// Nanosecond part of the Duration is lost.
+    /// TODO: Update when lwext4 supports nanosecond precision.
     pub fn set_atime(&mut self, time: &Duration) {
-        let _ = self.inner.set_atime(time.as_secs() as u32);
+        let secs = time.as_secs() as u32;
+        if time.subsec_nanos() != 0 {
+            trace!(
+                "set_atime: nanosecond precision lost ({}ns)",
+                time.subsec_nanos()
+            );
+        }
+        let _ = self.inner.set_atime(secs);
     }
 
+    /// Set modification time (mtime)
+    ///
+    /// Note: Current lwext4 implementation only supports second precision.
+    /// Nanosecond part of the Duration is lost.
+    /// TODO: Update when lwext4 supports nanosecond precision.
     pub fn set_mtime(&mut self, time: &Duration) {
-        let _ = self.inner.set_mtime(time.as_secs() as u32);
+        let secs = time.as_secs() as u32;
+        if time.subsec_nanos() != 0 {
+            trace!(
+                "set_mtime: nanosecond precision lost ({}ns)",
+                time.subsec_nanos()
+            );
+        }
+        let _ = self.inner.set_mtime(secs);
     }
 
     pub fn update_ctime(&mut self) {
@@ -574,7 +598,21 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
             .map_err(Ext4Error::from_core_error);
 
         match &result {
-            Ok(ino) => info!("[ext4] CREATE SUCCESS: new_ino={}", ino),
+            Ok(ino) => {
+                info!("[ext4] CREATE SUCCESS: new_ino={}", ino);
+                // 设置新创建文件的时间戳为当前时间
+                let now = core::time::Duration::from_secs(
+                    axhal::time::wall_time().as_secs()
+                );
+                if let Err(e) = self.with_inode_ref(*ino, |inode| {
+                    inode.set_atime(&now);
+                    inode.set_mtime(&now);
+                    inode.update_ctime();
+                    Ok(())
+                }) {
+                    warn!("[ext4] Failed to set timestamps for new inode {}: {:?}", ino, e);
+                }
+            }
             Err(e) => warn!("[ext4] CREATE FAILED: error={:?}", e),
         }
 
