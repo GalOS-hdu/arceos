@@ -136,6 +136,10 @@ pub struct DirReaderResult {
 }
 
 impl DirReaderResult {
+    /// Returns the current directory entry.
+    ///
+    /// Used by highlevel file system layer.
+    #[allow(dead_code)]
     pub fn entry(&self) -> DirEntry {
         DirEntry {
             inner: self.entries[self.current_index].clone(),
@@ -179,6 +183,10 @@ impl<'a, 'b, D: lwext4_core::BlockDevice> InodeRefWrapper<'a, 'b, D> {
             .unwrap_or(0)
     }
 
+    /// Checks if this inode represents a directory.
+    ///
+    /// Used by highlevel file system layer.
+    #[allow(dead_code)]
     pub fn is_dir(&mut self) -> bool {
         self.inner.is_dir().unwrap_or(false)
     }
@@ -490,6 +498,9 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
     }
 
     /// 读取符号链接的目标路径
+    ///
+    /// Used by highlevel file system layer for symlink operations.
+    #[allow(dead_code)]
     pub fn readlink(&mut self, ino: u32) -> Ext4Result<Vec<u8>> {
         use lwext4_core::consts::*;
 
@@ -664,6 +675,9 @@ impl<H: SystemHal, D: lwext4_core::BlockDevice> Ext4Filesystem<H, D> {
 
     /// Deferred deletion: 当VFS层释放最后一个对inode的引用时调用
     /// 如果 i_nlink == 0，则释放inode的所有资源
+    ///
+    /// Used by VFS layer for inode cleanup.
+    #[allow(dead_code)]
     pub fn drop_inode(&mut self, ino: u32) -> Ext4Result<()> {
         self.inner
             .drop_inode(ino)

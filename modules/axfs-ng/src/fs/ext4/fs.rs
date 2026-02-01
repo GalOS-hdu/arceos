@@ -22,7 +22,7 @@ pub struct Ext4Filesystem {
 
 impl Ext4Filesystem {
     pub fn new(dev: AxBlockDevice) -> VfsResult<Filesystem> {
-        let mut ext4 =
+        let ext4 =
             LwExt4Filesystem::new(Ext4CoreDisk::new(dev), EXT4_CONFIG).map_err(into_vfs_err)?;
 
         let fs = Arc::new(Self {
